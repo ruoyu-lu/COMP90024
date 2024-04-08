@@ -9,9 +9,17 @@
 
 using json = nlohmann::json;
 
-void process_json(json& data, int rank, int size, std::string& max_sentiment_hour, std::string& max_sentiment_day,
-                  double& max_sentiment_sum_hour, double& max_sentiment_sum_day, std::string& max_posts_hour,
-                  std::string& max_posts_day, int& max_posts_sum_hour, int& max_posts_sum_day) {
+struct DataTime {
+    std::string timeKey;
+    double sentiment_score;
+    int posts_num;
+
+    DataTime(std::string key, double score, int num)
+            : timeKey(std::move(key)), sentiment_score(score), posts_num(num) {}
+};
+
+void process_json(json& data, int rank, int size, std::vector<DataTime> &data_hour, std::vector<DataTime> &data_day) {
+
     std::map<std::string, double> sentiment_sum_by_hour;
     std::map<std::string, double> sentiment_sum_by_day;
     std::map<std::string, int> posts_sum_by_hour;
@@ -52,45 +60,28 @@ void process_json(json& data, int rank, int size, std::string& max_sentiment_hou
             sentiment = docData["sentiment"].get<double>();
         }
 
-        std::ostringstream hour_stream;
-        hour_stream << std::put_time(&tm, "%Y-%m-%d-%H");
-        std::string hour_key = hour_stream.str();
+        std::ostringstream os;
+        os << std::put_time(&tm, "%Y-%m-%d-%H");
+        std::string hour_key = os.str(); //generate hour_key
+
+        os.str(""); // 清空ostringstream
+        os << std::put_time(&tm, "%Y-%m-%d");
+        std::string day_key = os.str(); //generate day_key
 
         sentiment_sum_by_hour[hour_key] += sentiment;
-        sentiment_sum_by_day[hour_stream.str().substr(0, 10)] += sentiment;
+        sentiment_sum_by_day[day_key] += sentiment;
         posts_sum_by_hour[hour_key]++;
-        posts_sum_by_day[hour_stream.str().substr(0, 10)]++;
-
+        posts_sum_by_day[day_key]++;
+    }
+    //push hour data to vector
+    for (const auto &pair: sentiment_sum_by_hour) {
+        data_hour.emplace_back(pair.first, pair.second, posts_sum_by_hour[pair.first]);
     }
 
-    for (const auto& kv : sentiment_sum_by_hour) {
-        if (kv.second > max_sentiment_sum_hour) {
-            max_sentiment_sum_hour = kv.second;
-            max_sentiment_hour = kv.first;
-        }
+    //push day data to vector
+    for (const auto &pair: sentiment_sum_by_day) {
+        data_day.emplace_back(pair.first, pair.second, posts_sum_by_day[pair.first]);
     }
-
-    for (const auto& kv : sentiment_sum_by_day) {
-        if (kv.second > max_sentiment_sum_day) {
-            max_sentiment_sum_day = kv.second;
-            max_sentiment_day = kv.first;
-        }
-    }
-
-    for (const auto& kv : posts_sum_by_hour) {
-        if (kv.second > max_posts_sum_hour) {
-            max_posts_sum_hour = kv.second;
-            max_posts_hour = kv.first;
-        }
-    }
-
-    for(const auto& kv : posts_sum_by_day){
-        if(kv.second > max_posts_sum_day){
-            max_posts_sum_day = kv.second;
-            max_posts_day = kv.first;
-        }
-    }
-
 }
 
 int main(int argc, char** argv) {
@@ -123,89 +114,54 @@ int main(int argc, char** argv) {
     int max_posts_sum_hour = 0;
     int max_posts_sum_day = 0;
 
+    std::vector<DataTime> data_hour;
+    std::vector<DataTime> data_day;
+
     if(rank == 0) {
-        ::process_json(data_set, rank, size, max_sentiment_hour, max_sentiment_day,
-                       max_sentiment_sum_hour,max_sentiment_sum_day, max_posts_hour,
-                       max_posts_day, max_posts_sum_hour, max_posts_sum_day);
+        process_json(data_set, rank, size, data_hour, data_day);
 
-        std::string receive_max_sentiment_hour;
-        std::string receive_max_sentiment_day;
-        double receive_max_sentiment_sum_hour = 0.0;
-        double receive_max_sentiment_sum_day = 0.0;
-        std::string receive_max_posts_hour;
-        std::string receive_max_posts_day;
-        int receive_max_posts_sum_hour = 0;
-        int receive_max_posts_sum_day = 0;
+        auto max_hour_sentiment_it = std::max_element(data_hour.begin(), data_hour.end(),
+                                                      [](const DataTime &a, const DataTime &b) {
+                                                          return a.sentiment_score < b.sentiment_score;
+                                                      });
 
-        for(int j = 1; j < size; j++) {
-
-            std::cout << "this is rank 00000000000000000" << std::endl;
-
-            char temp_buffer[100];
-            
-            //recive data
-            MPI_Recv(temp_buffer, 100, MPI_CHAR, j, 0, MPI_COMM_WORLD,
-                     MPI_STATUS_IGNORE);
-            receive_max_sentiment_hour = std::string(temp_buffer);
-            MPI_Recv(temp_buffer, 100, MPI_CHAR, j, 0, MPI_COMM_WORLD,
-                     MPI_STATUS_IGNORE);
-            receive_max_sentiment_day = std::string(temp_buffer);
-            MPI_Recv(&receive_max_sentiment_sum_hour, 1, MPI_DOUBLE, j, 0, MPI_COMM_WORLD,
-                     MPI_STATUS_IGNORE);
-            MPI_Recv(&receive_max_sentiment_sum_day, 1, MPI_DOUBLE, j, 0, MPI_COMM_WORLD,
-                     MPI_STATUS_IGNORE);
-            MPI_Recv(temp_buffer, 100, MPI_CHAR, j, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            receive_max_posts_hour = std::string(temp_buffer);
-            MPI_Recv(temp_buffer, 100, MPI_CHAR, j, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            receive_max_posts_day = std::string(temp_buffer);
-            MPI_Recv(&receive_max_posts_sum_hour, 1, MPI_INT, j, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            MPI_Recv(&receive_max_posts_sum_day, 1, MPI_INT, j, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-            //compare data with recived data
-            if (receive_max_sentiment_sum_hour > max_sentiment_sum_hour) {
-                max_sentiment_sum_hour = receive_max_sentiment_sum_hour;
-                max_sentiment_hour = receive_max_sentiment_hour;
-            }
-            if (receive_max_sentiment_sum_day > max_sentiment_sum_day) {
-                max_sentiment_sum_day = receive_max_sentiment_sum_day;
-                max_sentiment_day = receive_max_sentiment_day;
-            }
-            if (receive_max_posts_sum_hour > max_posts_sum_hour) {
-                max_posts_sum_hour = receive_max_posts_sum_hour;
-                max_posts_hour = receive_max_posts_hour;
-            }
-            if (receive_max_posts_sum_day > max_posts_sum_day) {
-                max_posts_sum_day = receive_max_posts_sum_day;
-                max_posts_day = receive_max_posts_day;
-            }
+        if (max_hour_sentiment_it != data_hour.end()) {
+            std::cout << "Hour with the highest sentiment score: " << max_hour_sentiment_it->timeKey
+                      << " | Sentiment score: " << max_hour_sentiment_it->sentiment_score << std::endl;
         }
 
-        //output
-        std::cout << "hour with the highest sentiment sum: " << max_sentiment_hour
-                  << " || Sentiment sum: " << std::fixed << std::setprecision(2) << max_sentiment_sum_hour << std::endl;
-        std::cout << "day with the highest sentiment sum: " << max_sentiment_day
-                  << " || Sentiment sum: " << std::fixed << std::setprecision(2) << max_sentiment_sum_day << std::endl;
-        std::cout << "hour with the most posts: " << max_posts_hour
-                  << " || Posts: " << max_posts_sum_hour << std::endl;
-        std::cout << "day with the most posts: " << max_posts_day
-                  << " || Posts: " << max_posts_sum_day << std::endl;
+        auto max_day_sentiment_it = std::max_element(data_day.begin(), data_day.end(),
+                                                     [](const DataTime &a, const DataTime &b) {
+                                                         return a.sentiment_score < b.sentiment_score;
+                                                     });
+
+        if (max_day_sentiment_it != data_day.end()) {
+            std::cout << "Day with the highest sentiment score: " << max_day_sentiment_it->timeKey
+                      << " | Sentiment score: " << max_day_sentiment_it->sentiment_score << std::endl;
+        }
+
+        auto max_hour_posts_it = std::max_element(data_hour.begin(), data_hour.end(),
+                                                  [](const DataTime &a, const DataTime &b) {
+                                                      return a.posts_num < b.posts_num;
+                                                  });
+        if (max_hour_posts_it != data_hour.end()) {
+            std::cout << "Hour with the most posts: " << max_hour_posts_it->timeKey
+                      << " | Number of posts: " << max_hour_posts_it->posts_num << std::endl;
+        }
+
+        auto max_day_posts_it = std::max_element(data_day.begin(), data_day.end(),
+                                                 [](const DataTime &a, const DataTime &b) {
+                                                     return a.posts_num < b.posts_num;
+                                                 });
+        if (max_day_posts_it != data_day.end()) {
+            std::cout << "Day with the most posts: " << max_day_posts_it->timeKey
+                      << " | Number of posts: " << max_day_posts_it->posts_num << std::endl;
+
+        }
 
     }else {
-        ::process_json(data_set, rank, size, max_sentiment_hour, max_sentiment_day,
-                       max_sentiment_sum_hour,max_sentiment_sum_day, max_posts_hour,
-                       max_posts_day, max_posts_sum_hour, max_posts_sum_day);
+        process_json(data_set, rank, size, data_hour, data_day);
 
-        std::cout<<"this is rank "<<rank<<std::endl;
-
-        //send data
-        MPI_Send(max_sentiment_hour.c_str(), max_sentiment_hour.size()+1, MPI_CHAR, 0, 0, MPI_COMM_WORLD);
-        MPI_Send(max_sentiment_day.c_str(), max_sentiment_day.size()+1, MPI_CHAR, 0, 0, MPI_COMM_WORLD);
-        MPI_Send(&max_sentiment_sum_hour, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
-        MPI_Send(&max_sentiment_sum_day, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
-        MPI_Send(max_posts_hour.c_str(), max_posts_hour.size()+1, MPI_CHAR, 0, 0, MPI_COMM_WORLD);
-        MPI_Send(max_posts_day.c_str(), max_posts_day.size()+1, MPI_CHAR, 0, 0, MPI_COMM_WORLD);
-        MPI_Send(&max_posts_sum_hour, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
-        MPI_Send(&max_posts_sum_day, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
     }
 
     MPI_Finalize();

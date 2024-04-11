@@ -163,10 +163,6 @@ int main(int argc, char** argv) {
             }
         }
 
-
-        std::cout<< "Data processing is done!" << std::endl;
-        std::cout<<data_day.size()<<std::endl;
-        std::cout<<data_hour.size()<<std::endl;
         auto max_hour_sentiment_it = std::max_element(data_hour.begin(), data_hour.end(),
                                                       [](const DataTime &a, const DataTime &b) {
                                                           return a.sentiment_score < b.sentiment_score;

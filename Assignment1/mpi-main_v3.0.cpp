@@ -27,72 +27,6 @@ struct DataTime {
     }
 };
 
-void process_json(json& data, int rank, int size, std::vector<DataTime> &data_hour, std::vector<DataTime> &data_day) {
-
-    std::map<std::string, double> sentiment_sum_by_hour;
-    std::map<std::string, double> sentiment_sum_by_day;
-    std::map<std::string, int> posts_sum_by_hour;
-    std::map<std::string,int> posts_sum_by_day;
-
-    int start = (data["rows"].size() / size) * rank;
-    int end = (data["rows"].size() / size) * (rank + 1);
-    for (int i = start; i < end; ++i) {
-
-        const auto& item = data["rows"][i];
-
-        if (!item.is_object() || !item.contains("doc") || !item["doc"].is_object()) {
-            continue;
-        }
-
-        const auto& doc = item["doc"];
-        if (!doc.contains("data") || !doc["data"].is_object()) {
-            continue;
-        }
-
-        const auto& docData = doc["data"];
-        if (!docData.contains("created_at") || !docData["created_at"].is_string()) {
-            continue;
-        }
-
-        std::string created_at = docData["created_at"];
-        std::tm tm = {};
-        std::istringstream ss(created_at);
-        ss >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%S.000Z");
-
-        if (ss.fail()) {
-            std::cerr << "Failed to parse the created_at time: " << created_at << std::endl;
-            continue;
-        }
-
-        double sentiment = 0; // Default to 0
-        if (docData.contains("sentiment") && docData["sentiment"].is_number()) {
-            sentiment = docData["sentiment"].get<double>();
-        }
-
-        std::ostringstream os;
-        os << std::put_time(&tm, "%Y-%m-%d-%H");
-        std::string hour_key = os.str(); //generate hour_key
-
-        os.str(""); // 清空ostringstream
-        os << std::put_time(&tm, "%Y-%m-%d");
-        std::string day_key = os.str(); //generate day_key
-
-        sentiment_sum_by_hour[hour_key] += sentiment;
-        sentiment_sum_by_day[day_key] += sentiment;
-        posts_sum_by_hour[hour_key]++;
-        posts_sum_by_day[day_key]++;
-    }
-    //push hour data to vector
-    for (const auto &pair: sentiment_sum_by_hour) {
-        data_hour.emplace_back(pair.first, pair.second, posts_sum_by_hour[pair.first]);
-    }
-
-    //push day data to vector
-    for (const auto &pair: sentiment_sum_by_day) {
-        data_day.emplace_back(pair.first, pair.second, posts_sum_by_day[pair.first]);
-    }
-}
-
 int main(int argc, char** argv) {
     MPI_Init(NULL, NULL);
     int size, rank;
@@ -202,12 +136,6 @@ int main(int argc, char** argv) {
                      MPI_STATUS_IGNORE);
             MPI_Recv(data_day_recv.data(), num_elements_day, data_time_type, i, 0, MPI_COMM_WORLD,
                      MPI_STATUS_IGNORE);
-            data_hour.insert(data_hour.end(), data_hour_recv.begin(), data_hour_recv.end());
-            data_day.insert(data_day.end(), data_day_recv.begin(), data_day_recv.end());
-
-            std::cout<<"Rank 0 received data from rank "<<i<<std::endl;
-            std::cout<<data_day_recv.size()<<std::endl;
-            std::cout<<data_hour_recv.size()<<std::endl;
 
             //combine data from other ranks
             for (const auto &item: data_hour_recv) {

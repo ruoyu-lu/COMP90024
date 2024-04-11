@@ -72,22 +72,11 @@ int main(int argc, char** argv) {
             if (!line.empty() && line == "{}]}") {
                 break;
             }
-            if (!line.empty() && line.back() == '\r') {
                 line.pop_back();
-            }
-            if (!line.empty() && line.back() == ',') {
                 line.pop_back();
-            }
-            if (line.empty()) {
-                std::cout << "empty line!!!" << std::endl;
-            }
 
             json j;
-            try {
-                j = json::parse(line);
-            } catch (json::parse_error &e) {
-                std::cerr << "解析错误：" << e.what() << "\n在这一行：" << line << std::endl;
-            }
+            j = json::parse(line);
 
             if (!j.is_object() || !j.contains("doc") || !j["doc"].is_object()) {
                 continue;
@@ -114,10 +103,52 @@ int main(int argc, char** argv) {
                 MPI_Send(&sentiment, 1, MPI_DOUBLE, send_rank, 0, MPI_COMM_WORLD);
                 send_rank = send_rank % 7 + 1;
             }
+            else{
+                std::tm tm = {};
+                std::istringstream ss(created_at);
+                ss >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%S.000Z");
+
+                if (ss.fail()) {
+                    std::cerr << "Failed to parse the created_at time: " << created_at << std::endl;
+                }
+
+                std::ostringstream os;
+                os << std::put_time(&tm, "%Y-%m-%d-%H");
+                std::string hour_key = os.str(); //generate hour_key
+
+                os.str(""); // 清空ostringstream
+                os << std::put_time(&tm, "%Y-%m-%d");
+                std::string day_key = os.str(); //generate day_key
+
+                auto it_hour = std::find_if(data_hour.begin(), data_hour.end(), [&hour_key](const DataTime &a) {
+                    return std::string(a.timeKey) == hour_key;
+                });
+
+                if (it_hour != data_hour.end()) {
+                    it_hour->sentiment_score += sentiment;
+                    it_hour->posts_num++;
+                } else {
+                    data_hour.emplace_back(hour_key, sentiment, 1);
+                }
+
+                auto it_day = std::find_if(data_day.begin(), data_day.end(), [&day_key](const DataTime &a) {
+                    return std::string(a.timeKey) == day_key;
+                });
+
+                if (it_day != data_day.end()) {
+                    it_day->sentiment_score += sentiment;
+                    it_day->posts_num++;
+                } else {
+                    data_day.emplace_back(day_key, sentiment, 1);
+                }
+
+            }
         }
-        for(int i = 1; i < size; i++){
-            MPI_Send(created_at, 20, MPI_CHAR, i, 1, MPI_COMM_WORLD);
-            MPI_Send(&sentiment, 1, MPI_DOUBLE, i, 1, MPI_COMM_WORLD);
+        if(size > 1){
+            for(int i = 1; i < size; i++){
+                MPI_Send(created_at, 20, MPI_CHAR, i, 1, MPI_COMM_WORLD);
+                MPI_Send(&sentiment, 1, MPI_DOUBLE, i, 1, MPI_COMM_WORLD);
+            }
         }
 
         std::vector<DataTime> data_hour_recv;
